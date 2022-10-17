@@ -1,0 +1,477 @@
+theory MD_NG_SP
+begin
+
+builtins:  symmetric-encryption,hashing,xor,diffie-hellman
+
+functions: senc/2, sdec/2, h1/1, h2/2, Rec/2,  Gen/1, XOR/2,
+					PUF_e/1  [private],PUF_r/1  [private]
+equations: Rec(PUF_e(C),Gen(PUF_r(C)))=PUF_r(C)
+
+
+/****** System Setup ******/
+rule Setup:
+    []
+    --[Once('Setup')]->
+    [!Entity($SP, $NG, $MD_A, $MD_B)]
+
+rule Key_Gnerator:
+    let 
+		R_e_A=PUF_e(~C_A)
+		R_e_B=PUF_e(~C_B)
+		R_e_NG=PUF_e(~C_NG)
+
+    in
+		[!Entity(SP, NG, MD_A, MD_B),
+        Fr(~C_A), Fr(~C_B), Fr(~C_NG), 
+        Fr(~tid)
+  		]
+    --[ Once('Init'),
+        Neq(MD_A, MD_B),
+		Neq(~C_A, ~C_B),
+		Neq(~C_A, ~C_NG),
+		Neq(~C_B, ~C_NG)
+    ]->
+
+  	[ 
+		SP_Init(~tid, SP, <MD_A,R_e_A>,<MD_B,R_e_B>,<NG,R_e_NG>),
+		NG_Init(~tid,NG,SP,~C_NG),
+        MD_A_init(~tid,MD_A,SP,NG,~C_A),
+        MD_B_init(~tid,MD_B,SP,NG,~C_B)
+  	]
+
+ rule Reveal_MD_A:
+    [ St_MD_A_1(tid,MD_A,SP,NG,SK_A,n_G)
+	]
+    --[Reveal_MDA(MD_A)]->
+    [Out(SK_A)]
+
+rule Reveal_MD_B:
+    [ St_MD_B_1(tid,MD_B,SP,NG,SK_B,n_G)]
+    --[Reveal_MDB(MD_B)]->
+    [Out(SK_B)]
+
+rule Reveal_NG:
+    [ St_NG_2(tid,NG,SP,n_G,SK_NG)]
+    --[Reveal_NG(NG)]->
+    [Out(SK_NG)]
+
+rule Reveal_SP:
+    [ SP_Init(~tid, SP, <MD_A,R_e_A>,<MD_B,R_e_B>,<NG,R_e_NG>)]
+    --[Reveal_SP(SP)]->
+    [Out(<R_e_A,R_e_B,R_e_NG>)]
+
+rule NG_1:
+	[NG_Init(tid,NG,SP,C_NG),
+	Fr(~n_G)
+	]
+	--[Start_NG(NG)]->
+	[Out(<'TAG_Req',~n_G>),
+	St_NG_1(tid,NG,SP,C_NG,~n_G)]
+
+rule MD_A_1:
+	let
+		R_r_A=PUF_r(C_A)
+		hd_A = Gen(R_r_A)
+		SK_A=h2(R_r_A,n_G)
+
+	in
+	[
+		In(<'TAG_Req',n_G>),
+		MD_A_init(tid,MD_A,SP,NG,C_A)	
+	]
+	--[
+		Start_MD_A(MD_A)	
+	  ]->
+
+	[Out(<MD_A,hd_A>),
+	St_MD_A_1(tid,MD_A,SP,NG,SK_A,n_G)]
+
+rule MD_B_1:
+	let
+		R_r_B=PUF_r(C_B)
+		hd_B = Gen(R_r_B)
+		SK_B=h2(R_r_B,n_G)
+
+	in
+	[
+		In(<'TAG_Req',n_G>),
+		MD_B_init(tid,MD_B,SP,NG,C_B)
+	]
+	--[Start_MD_B(MD_B),
+	  // Secret(MD_B,SK_B),
+	   Honest(MD_B)]->
+
+	[Out(<MD_B,hd_B>),
+	St_MD_B_1(tid,MD_B,SP,NG,SK_B,n_G)]
+
+rule NG_2:
+	let
+		R_r_NG=PUF_r(C_NG)
+		hd_NG = Gen(R_r_NG)
+		SK_NG=h2(R_r_NG,n_G)
+		Q1=h2(SK_NG,<hd_A,hd_B,hd_NG,n_G>)
+	in
+		[St_NG_1(tid,NG,SP,C_NG,n_G),
+		In(<MD_A,hd_A>),
+		In(<MD_B,hd_B>)
+		]
+	--[
+	   Honest(NG),
+	   Running(NG,SP,<'NG','SP',SK_NG>)
+	   ]->
+
+	[Out(<hd_A,hd_B,hd_NG,n_G,Q1>),
+	St_NG_2(tid,NG,SP,n_G,SK_NG)]
+
+rule SP_1:
+    let 
+		R_r_A = Rec(R_e_A,hd_A)
+		R_r_B = Rec(R_e_B,hd_B)
+		R_r_NG = Rec(R_e_NG,hd_NG)
+		SK_A = h2(R_r_A ,n_G)
+		SK_B = h2(R_r_B ,n_G)
+		SK_NG = h2(R_r_NG ,n_G)
+		Q11 = h2(SK_NG,<hd_A,hd_B,hd_NG,n_G>)
+		Auth_A = h2(SK_A,n_G)
+		Auth_B = h2(SK_B,n_G)
+		Auth = XOR(Auth_A,Auth_B)
+		AuthE = senc(Auth,SK_NG)
+		Q2 = h2(SK_NG,<AuthE,n_G>)
+    in
+		[ SP_Init(tid, SP, <MD_A,R_e_A>,<MD_B,R_e_B>,<NG,R_e_NG>),
+		  
+		  In(<hd_A,hd_B,hd_NG,n_G,Q1>)		
+		]
+    --[
+		Start_SP(SP),
+	 	Eq(Q1,Q11),
+		Secret(SP,SK_NG),
+		Honest(NG),
+		Honest(SP),
+		Commit(SP, NG, <'SP','NG',SK_NG>),
+		Running(SP, NG, <'SP','NG',SK_NG>),
+		Running(SP, MD_A, <'SP','MDA',SK_A>),
+		Running(SP, MD_B, <'SP','MDB',SK_B>)
+		]->
+
+    [  Out(<AuthE,Q2>),
+       St_SP_1(tid,SP, <MD_A,R_r_A,SK_A>,<MD_B,R_r_B,SK_B>,<NG,R_r_NG,SK_NG>)
+    ]
+
+rule NG_3:
+	let
+		Q22 = h2(SK_NG,<AuthE,n_G>)
+		Auth = sdec(AuthE,SK_NG)
+		AuthH = h1(Auth)
+	in
+	[
+		St_NG_2(tid,NG,SP,n_G,SK_NG),
+		In(<AuthE,Q2>)
+	]
+	--[ Eq(Q2,Q22),		
+		//Secret_NG(NG,SK_NG),
+		Commit(NG,SP,<'NG','SP',SK_NG>),
+		Honest(NG),
+		Honest(SP)
+	   ]->
+
+	[Out(<'TAG_Auth',AuthH>),
+	St_NG_3(tid,NG,SP,n_G,SK_NG,Auth)]
+
+rule MD_A_2:
+	let
+		Auth_A=h2(SK_A,n_G)
+		Q3A = h2(Auth_A,n_G)
+	in
+	[
+		In(<'TAG_Auth',AuthH>),
+		St_MD_A_1(tid,MD_A,SP,NG,SK_A,n_G)		
+	]
+	--[Running(MD_A,SP,<'MDA','SP',SK_A>),	   
+	   Honest(MD_A),
+	   Honest(NG)
+	]->
+
+	[Out(<MD_A,Auth_A,Q3A>),
+	St_MD_A_2(tid,MD_A,SP,NG,SK_A,n_G,Auth_A,AuthH)]
+
+rule MD_B_2:
+	let
+		Auth_B=h2(SK_B,n_G)
+		Q3B = h2(Auth_B,n_G)
+	in
+	[
+		In(<'TAG_Auth',AuthH>),
+		St_MD_B_1(tid,MD_B,SP,NG,SK_B,n_G)		
+	]
+	--[Running(MD_B,SP,<'MDB','SP',SK_B>),
+	   Honest(MD_B),
+	   Honest(NG)
+	]->
+
+	[Out(<MD_B,Auth_B,Q3B>),
+	St_MD_B_2(tid,MD_B,SP,NG,SK_B,n_G,Auth_B,AuthH)]
+
+
+rule NG_4:
+	let
+		Q33A = h2(Auth_A,n_G)
+		Q33B = h2(Auth_B,n_G)
+		Auth_receive = XOR(Auth_A, Auth_B)
+		Done = h2('TAG_Done',SK_NG)
+	in
+	[
+		St_NG_3(tid,NG,SP,n_G,SK_NG,Auth),
+		In(<MD_A,Auth_A,Q3A>),
+		In(<MD_B,Auth_B,Q3B>)
+	]
+	--[ Eq(Q3A,Q33A),
+	    Eq(Q3B,Q33B),
+		Eq(Auth_receive,Auth),
+		Secret_NG(NG,SK_NG),
+		Honest(SP),		
+	    Honest(NG),
+		End_NG()
+	   ]->
+
+	[Out(<'TAG_Done',Done>),
+	St_NG_4(tid,NG,n_G,SK_NG,Auth)]
+
+rule SP_2:
+  
+	[ St_SP_1(tid,SP, <MD_A,R_r_A,SK_A>,<MD_B,R_r_B,SK_B>,<NG,R_r_NG,SK_NG>),
+	  In(<'TAG_Done',Done>)		
+	]
+    --[
+	 	Eq(Done,h2('TAG_Done',SK_NG)),
+		Commit(SP,MD_A,<'SP','MDA',SK_A>),
+		Commit(SP,MD_B,<'SP','MDB',SK_B>),
+		Honest(MD_A),
+		Honest(MD_B),
+		Honest(NG),
+		End_SP()
+		]->
+    []
+
+rule MD_A_3:
+	let
+		AuthH_A = h1(XOR(Auth_A, Auth_B))
+	in
+	[
+		In(<MD_B,Auth_B,Q3B>),
+		St_MD_A_2(tid,MD_A,SP,NG,SK_A,n_G,Auth_A,AuthH)	
+	]
+	--[ Eq(AuthH_A,AuthH),
+		Secret_MD_A(MD_A,SK_A),
+		Commit(MD_A,SP,<'MDA','SP',SK_A>),
+	    Honest(MD_A),
+		Honest(SP),
+		End_MD_A()
+	]->
+
+	[]
+
+rule MD_B_3:
+	let
+		AuthH_B = h1(XOR(Auth_A, Auth_B))
+	in
+	[
+		In(<MD_A,Auth_A,Q3A>),
+		St_MD_B_2(tid,MD_B,SP,NG,SK_B,n_G,Auth_B,AuthH)	
+	]
+	--[ Eq(AuthH_B,AuthH),
+		Secret_MD_B(MD_B,SK_B),
+		Commit(MD_B,SP,<'MDB','SP',SK_B>),
+	    Honest(MD_B),
+		Honest(SP),
+		End_MD_B()
+	]->
+
+	[]
+
+
+/****** Restriction ******/
+
+
+restriction Nequality:
+  "All x y #i. Neq(x,y) @i ==> not(x = y)
+  "
+
+restriction Equality:
+"
+    All x y #i. Eq(x,y) @i ==> x = y
+	
+"
+
+
+restriction Once:
+  "All tag #i #j. Once(tag)@i & Once(tag)@j ==> #i = #j"
+
+
+
+restriction SP_once:
+"
+    All SP #i #j. Start_SP(SP) @i & Start_SP(SP) @j
+        ==> #i = #j
+"
+
+restriction MD_A_once:
+"
+    All MD_A #i #j. Start_MD_A(MD_A) @i & Start_MD_A(MD_A) @j
+        ==> #i = #j
+"
+
+restriction MD_B_once:
+"
+    All MD_B #i #j. Start_MD_B(MD_B) @i & Start_MD_B(MD_B) @j
+        ==> #i = #j
+"
+restriction NG_once:
+"
+    All NG #i #j. Start_NG(NG) @i & Start_NG(NG) @j
+        ==> #i = #j
+"
+
+/****** Security Properties ******/
+
+lemma trace_exists: exists-trace
+"
+    Ex #i /*#j #r*/ . End_SP() @i /*& End_MD_B() @j  &   End_MD_A() @r*/ //& End_NG() @t 
+	& (All SP1 SP2 #n #k. Start_SP(SP1) @n
+            & Start_SP(SP2) @k ==> #n = #k)
+    & (All MD_A1 MD_A2 #n #k. Start_MD_A(MD_A1) @n 
+            & Start_MD_A(MD_A2) @k ==> #n = #k)
+	& (All MD_B1 MD_B2 #n #k. Start_MD_B(MD_B1) @n 
+            & Start_MD_B(MD_B2) @k ==> #n = #k)
+	& (All NG1 NG2 #n #k. Start_NG(NG1) @n 
+            & Start_NG(NG2) @k ==> #n = #k)	
+" 
+
+
+lemma SK_A_Secrecy:
+"
+    All MD_A  Key #i. Secret_MD_A(MD_A, Key) @i
+        ==> not (Ex #j. K(Key) @j)
+        | (Ex   #r. Reveal_MDA(MD_A) @r & Honest(MD_A) @i & r < i)
+		| (Ex  SP #r. Reveal_SP(SP) @r & Honest(SP) @i & r < i)
+"
+
+lemma SK_B_Secrecy:
+"
+    All MD_B  Key #i. Secret_MD_B(MD_B, Key) @i
+        ==> not (Ex #j. K(Key) @j)
+        | (Ex   #r. Reveal_MDB(MD_B) @r & Honest(MD_B) @i & r < i) 
+		| (Ex  SP #r. Reveal_SP(SP) @r & Honest(SP) @i & r < i)    
+"
+
+lemma SK_NG_Secrecy:
+"
+    All NG  Key #i. Secret_NG(NG, Key) @i
+        ==> not (Ex #j. K(Key) @j)
+        | (Ex   #r. Reveal_NG(NG) @r & Honest(NG) @i )   
+		| (Ex  SP #r. Reveal_SP(SP) @r & Honest(SP) @i)  
+"
+/*
+lemma SP_weak_agreement_On_SK_A:
+"
+    All SP MDA k1 #i. Commit(SP, MDA,<'SP','MDA',k1>) @i
+        ==> (Ex k2 #j. Running(MDA, SP,<'MDA','SP',k2>) @j )
+		| (Ex #r. Reveal_MDA(MDA) @r & Honest(MDA) @i  & r < i)
+        | (Ex #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex NG  #r. Reveal_NG(NG) @r & Honest(NG) @i & r < i)		
+"
+lemma SP_agreement_On_SK_A:
+"
+    All SP MDA k #i. Commit(SP, MDA, <'SP','MDA',k>) @i
+        ==> (Ex #j. Running(MDA, SP, <'MDA','SP',k>) @j  )
+		| (Ex #r. Reveal_MDA(MDA) @r & Honest(MDA) @i  & r < i)
+        | (Ex #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex  NG #r. Reveal_NG(NG) @r & Honest(NG) @i)
+"
+lemma SP_weak_agreement_On_SK_NG:
+"
+    All SP NG k1 #i. Commit(SP, NG,<'SP','NG',k1>) @i
+        ==> (Ex k2 #j. Running(NG, SP,<'NG','SP',k2>) @j )
+        | (Ex #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex #r. Reveal_NG(NG) @r & Honest(NG) @i & r < i)		
+"
+lemma SP_agreement_On_SK_NG:
+"
+    All SP NG k #i. Commit(SP, NG, <'SP','NG',k>) @i
+        ==> (Ex #j. Running(NG, SP, <'NG','SP',k>) @j  )
+        | (Ex #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex #r. Reveal_NG(NG) @r & Honest(NG) @i)
+"
+lemma MDA_weak_agreement_On_SK_A:
+"
+    All SP MDA k1 #i. Commit(MDA,SP,<'MDA','SP',k1>) @i
+        ==> (Ex k2 #j. Running(SP, MDA,<'SP','MDA',k2>) @j & j < i)
+        | (Ex #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex   #r. Reveal_MDA(MDA) @r & Honest(MDA) @i  & r < i)
+"
+lemma MDA_agreement_On_SK_A:
+"
+    All SP MDA k #i. Commit(MDA,SP, <'MDA','SP',k>) @i
+        ==> (Ex #j. Running(SP,MDA, <'SP','MDA',k>) @j  & j < i)
+        | (Ex #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex   #r. Reveal_MDA(MDA) @r & Honest(MDA) @i  & r < i)
+"
+
+*/
+
+lemma SP_injective_agreement_On_SK_A:
+"
+    All SP MDA k #i. Commit(SP, MDA,<'SP','MDA',k>) @i
+        ==> (Ex #j. Running(MDA, SP, <'MDA','SP',k>) @j  & j < i
+        & not (Ex SP2 MDA2 k #i2. Commit(SP2, MDA2, <'SP','MDA',k>) @i2 & not(#i2 = #i)))
+        | (Ex   #r. Reveal_MDA(MDA) @r & Honest(MDA) @i  & r < i)
+		| (Ex   #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex  NG #r. Reveal_NG(NG) @r & Honest(NG) @i)
+"
+
+lemma MDA_injective_agreement_On_SK_A:
+"
+    All SP MDA k #i. Commit(MDA,SP,<'MDA','SP',k>) @i
+        ==> (Ex #j. Running(SP,MDA, <'SP','MDA',k>) @j  & j < i
+        & not (Ex SP2 MDA2 k #i2. Commit( MDA2,SP2, <'MDA','SP',k>) @i2 & not(#i2 = #i)))
+        | (Ex   #r. Reveal_MDA(MDA) @r & Honest(MDA) @i  & r < i)
+		| (Ex   #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+"
+
+lemma SP_injective_agreement_On_SK_B:
+"
+    All SP MDB k #i. Commit(SP, MDB,<'SP','MDB',k>) @i
+        ==> (Ex #j. Running(MDB, SP, <'MDB','SP',k>) @j  & j < i
+        & not (Ex SP2 MDB2 k #i2. Commit(SP2, MDB2, <'SP','MDB',k>) @i2 & not(#i2 = #i)))
+        | (Ex   #r. Reveal_MDB(MDB) @r & Honest(MDB) @i  & r < i)
+		| (Ex   #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+		| (Ex  NG #r. Reveal_NG(NG) @r & Honest(NG) @i)
+"
+lemma MDB_injective_agreement_On_SK_B:
+"
+    All SP MDB k #i. Commit(MDB,SP,<'MDB','SP',k>) @i
+        ==> (Ex #j. Running(SP,MDB, <'SP','MDB',k>) @j  & j < i
+        & not (Ex SP2 MDB2 k #i2. Commit( MDB2,SP2, <'MDB','SP',k>) @i2 & not(#i2 = #i)))
+        | (Ex   #r. Reveal_MDB(MDB) @r & Honest(MDB) @i  & r < i)
+		| (Ex   #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+"
+
+lemma SP_injective_agreement_On_SK_NG:
+"
+    All SP NG k #i. Commit(SP, NG, <'SP','NG',k>) @i
+        ==> (Ex #j. Running(NG, SP,<'NG','SP',k>) @j  & j < i
+        & not (Ex SP2 NG2 k #i2. Commit(SP2, NG2,  <'SP','NG',k>) @i2 & not(#i2 = #i)))
+        | (Ex   #r. Reveal_NG(NG) @r & Honest(NG) @i  & r < i)
+		| (Ex   #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+"
+
+lemma NG_injective_agreement_On_SK_NG:
+"
+    All SP NG k #i. Commit( NG,SP, <'NG','SP',k>) @i
+        ==> (Ex #j. Running( SP,NG,<'SP','NG',k>) @j  & j < i
+        & not (Ex SP2 NG2 k #i2. Commit( NG2,SP2,  <'NG','SP',k>) @i2 & not(#i2 = #i)))
+        | (Ex   #r. Reveal_NG(NG) @r & Honest(NG) @i  & r < i)
+		| (Ex   #r. Reveal_SP(SP) @r & Honest(SP) @i  & r < i)
+"
+
+end
